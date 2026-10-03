@@ -1,0 +1,110 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#2563eb"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><link rel="apple-touch-icon" href="icon-192.png"><title>K07 Power Consumption Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f4f6f9;--cd:#fff;--tx:#1b2430;--mu:#667085;--bd:#e1e5eb;--ac:#2563eb;--bad:#d92d20;--ok:#12805c;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f141b;--cd:#18202a;--tx:#e6eaf0;--mu:#97a3b4;--bd:#2a3442;--ac:#5b8def;--bad:#f97066;--ok:#47cd89}}
+:root[data-theme="dark"]{--bg:#0f141b;--cd:#18202a;--tx:#e6eaf0;--mu:#97a3b4;--bd:#2a3442;--ac:#5b8def;--bad:#f97066;--ok:#47cd89}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.w{max-width:1100px;margin:0 auto;padding:16px}h1{font-size:20px;margin:0 0 4px}.mu{color:var(--mu);font-size:12px}
+.tabs{display:flex;gap:6px;margin:12px 0}.tabs button,.b{border:1px solid var(--bd);background:var(--cd);color:var(--tx);padding:8px 14px;border-radius:8px;cursor:pointer;font:inherit}
+.tabs button.on{background:var(--ac);color:#fff;border-color:var(--ac)}
+.cd{background:var(--cd);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+.up{display:flex;flex-wrap:wrap;gap:10px;align-items:center}select{padding:7px;border-radius:8px;border:1px solid var(--bd);background:var(--cd);color:var(--tx)}
+.k{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}.k div{background:var(--cd);border:1px solid var(--bd);border-radius:12px;padding:10px 12px}
+.k b{display:block;font-size:20px}.up2{color:var(--bad)}.dn{color:var(--ok)}
+.sc{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:560px}th,td{padding:7px 8px;border-bottom:1px solid var(--bd);text-align:right}th:first-child,td:first-child{text-align:left}
+tr.cl{cursor:pointer}tr.cl:hover{background:var(--bg)}tr.hi td:first-child{color:var(--bad);font-weight:600}
+#modal{display:none;position:fixed;inset:0;background:#0008;align-items:center;justify-content:center;z-index:9;padding:16px}
+#modal>div{background:var(--cd);border:2px solid var(--bad);border-radius:14px;max-width:460px;width:100%;max-height:80vh;overflow:auto;padding:18px}
+#modal h3{margin:0 0 8px;color:var(--bad)}#modal li{margin:4px 0}.cv{position:relative;height:420px}
+details{font-size:13px;color:var(--mu)}
+</style></head><body><div class="w">
+<h1>⚡ K07 Power Consumption Dashboard</h1><div class="mu">Upload daily “Meas. value” files (name must contain dd-mm-yyyy). Data is kept in this browser.</div>
+<div class="tabs"><button id="t1" class="on">Daily Consumption</button><button id="t2">Department-wise (Monthly)</button></div>
+<div class="cd up"><input type="file" id="f" accept=".xlsx,.xls" multiple>
+<span class="mu">Also accepts a monthly EMS Generation report (to load a previous month for comparison).</span>
+<button class="b" id="inst" style="display:none">⬇ Install app</button><button class="b" id="clr">Clear stored data</button><span id="msg" class="mu"></span></div>
+
+<section id="p1"><div class="up" style="margin-bottom:10px"><b>Day:</b><select id="ds"></select></div>
+<div class="k" id="kp"></div><div class="cd"><div class="cv"><canvas id="c1"></canvas></div></div>
+<details class="cd"><summary>How K07 consumption is calculated</summary>
+<p>Incoming = OGF#3 GENSET K07 + OGF#1 HESCO K07 + SOLAR-1 + SOLAR-3<br>Outgoing = MAIN ACB-01 + MAIN ACB-02<br>Losses = Incoming − Outgoing<br>Compressor share = 35% × (K07 COMPRESSOR + COMPRESSOR-1 + -2 + -3)<br>
+<b>K07 = Outgoing − P/H ATS (K09) + Losses + Compressor share</b></p></details></section>
+
+<section id="p2" style="display:none"><div class="up" style="margin-bottom:10px"><b>Month:</b><select id="ms"></select><span id="pm" class="mu"></span></div>
+<div class="cd"><div class="cv"><canvas id="c2"></canvas></div><div class="mu">Average kWh/day (months are compared per day, since the current month is incomplete). Click a bar or row for sub-departments.</div></div>
+<div class="cd sc"><table id="tb"></table></div><div class="cd sc" id="sub" style="display:none"></div></section></div>
+<div id="modal"><div><h3 id="mt"></h3><ul id="mb"></ul><button class="b" id="ok">OK</button></div></div>
+<script>
+const $=s=>document.querySelector(s),N=s=>String(s).trim().replace(/\s+/g,' ').toUpperCase(),F=x=>Math.round(x).toLocaleString();
+const ATS='P/H ATS (K09, not in K07 total)';
+const DEPT={'Mills Lighting':['MILLS LIGHTING'],'Hydrant Pumps':['HYDERANT PUMP-1','HYDERANT PUMP-2'],'Work Shop':['WORKSHOP'],[ATS]:['P/H ATS'],'Waste Plant (WRP)':['WRP'],
+'Blow Room':['B/R IB LINE','B/R NONE IB'],'Carding':['CARD JWF1213 (LT1)','CARD JWF1213 LT2','CARD DK 903 M/C'],'Drawing':['DRAWING'],'Simplex':['SIMPLEX'],
+'Ring':['RING 1 TO 7','RING 08 ~ 13','RING 14 ~ 20','RING 21 ~ 28','RING 29 ~ 34','RING 35 ~ 40 ((LT1)','RING 35 TO 40 T2'],'Auto Cone (Winding)':['WINDING'],
+'OBEM':['Y/C OBEM (LT1)','Y/C OBEM T-2'],'FDP Blow Room':['B/R FDP 75 KW'],'FDP Card':['CARD FDP 75 KW (LT1)','CARDING FDP 90 KW','CARD FDP 75 KW T-2'],
+'Ring AC':['RING A/C-1','RING A/C-2'],'D/S AC':['CARD D/S AC'],'Winding AC':['WINDING A/C (K07)'],'Empty':['EMPTY']};
+const COLS=['SOLAR-1 (988kW)','MAIN ACB-01','CARD JWF1213 (LT1)','RING 08 ~ 13','RING 14 ~ 20','RING 21 ~ 28','RING 29 ~ 34','RING 35 ~ 40 ((LT1)','WINDING','Y/C OBEM (LT1)','COMPRESSOR','CARD FDP 75 KW (LT1)','CARD D/S AC','WINDING A/C (K07)','HYDERANT PUMP-1','HYDERANT PUMP-2','WORKSHOP','P/H ATS','EMPTY','SOLAR-3 (1081 kW)','MAIN ACB - 02','B/R IB LINE','B/R NONE IB','WRP','CARD JWF1213 LT2','CARD DK 903 M/C','DRAWING','SIMPLEX','RING 1 TO 7','RING 35 TO 40 T2','Y/C OBEM T-2','B/R FDP 75 KW','CARDING FDP 90 KW','CARD FDP 75 KW T-2','RING A/C-1','RING A/C-2','MILLS LIGHTING'];
+const CMP=['K07 COMPRESSOR','COMPRESSOR-1','COMPRESSOR-2','COMPRESSOR-3'];
+let S={},ch={},sel=null,dirty=1;try{S=JSON.parse(localStorage.getItem('k07')||'{}')}catch(e){}
+const save=()=>{try{localStorage.setItem('k07',JSON.stringify(S))}catch(e){}};
+const dates=()=>Object.keys(S).sort(),iso=d=>new Date(d.getTime()+43200000).toISOString().slice(0,10);
+function calc(m){const g=n=>m[N(n)]||0,sol=g('SOLAR-1 (988kW)')+g('SOLAR-3 (1081 kW)'),out=g('MAIN ACB-01')+g('MAIN ACB - 02'),
+inc=g('OGF#3 GENSET K07')+g('OGF#1 HESCO K07')+sol,loss=inc-out,cs=CMP.map(n=>.35*g(n)),cmp=cs.reduce((a,b)=>a+b,0),ats=g('P/H ATS'),d={};
+for(const k in DEPT)d[k]=DEPT[k].map(n=>[n,g(n)]);d['Compressors (35% share)']=CMP.map((n,i)=>[n+' ×35%',cs[i]]);d['Transformer Losses']=[['Incoming − Outgoing',loss]];
+const dv={};for(const k in d)dv[k]={v:d[k].reduce((a,b)=>a+b[1],0),s:d[k]};
+return{sol,out,inc,loss,cmp,ats,tot:out-ats+loss+cmp,dv}}
+function msg(t,bad){$('#msg').textContent=t;$('#msg').style.color=bad?'var(--bad)':''}
+function pop(t,rows){$('#mt').textContent=t;$('#mb').innerHTML=rows.map(r=>`<li><b>${r[0]}</b>: ${F(r[1])} vs ${F(r[2])} kWh (+${((r[1]/r[2]-1)*100||0).toFixed(1)}%)</li>`).join('');$('#modal').style.display='flex'}
+$('#ok').onclick=()=>$('#modal').style.display='none';
+async function ingest(f){const wb=XLSX.read(await f.arrayBuffer(),{cellDates:true});
+if(wb.Sheets.K07){const a=wb.Sheets.K07,b=wb.Sheets.K08,c=wb.Sheets.K09,v=(w,x)=>{const q=w&&w[x];return q&&typeof q.v=='number'?q.v:0};let n=0;
+for(let r=3;r<=33;r++){const dt=a['A'+r];if(!dt||!(dt.v instanceof Date)||!v(a,'G'+r))continue;const m={};
+COLS.forEach((x,i)=>m[N(x)]=v(a,XLSX.utils.encode_col(5+i)+r));m[N('OGF#3 GENSET K07')]=v(c,'E'+(r-1));m[N('OGF#1 HESCO K07')]=v(c,'C'+(r-1));
+[['K07 COMPRESSOR','M'],['COMPRESSOR-1','N'],['COMPRESSOR-2','AH'],['COMPRESSOR-3','AI']].forEach(([x,y])=>m[N(x)]=v(b,y+r));S[iso(dt.v)]=m;n++}
+return n+' day(s) from report'}
+const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1}),m={};
+rows.slice(3).forEach(r=>{const x=parseFloat(r[3]);if(r[0]&&!isNaN(x))m[N(r[0])]=x});
+if(m[N('MAIN ACB-01')]==null)throw Error('not a Meas. value file');
+const t=f.name.match(/(\d{2})-(\d{2})-(\d{4})/);if(!t)throw Error('no dd-mm-yyyy in file name');
+const d=`${t[3]}-${t[2]}-${t[1]}`;S[d]=m;sel=d;return d}
+$('#f').onchange=async e=>{let ok=[],last;for(const f of e.target.files){try{last=await ingest(f);ok.push(f.name+' ✓')}catch(x){msg(f.name+': '+x.message,1);return}}
+save();dirty=1;e.target.value='';msg(ok.join(', '));if(!sel||sel.length!=10)sel=dates().pop();fill();draw1(1);if($('#p2').style.display!='none')draw2(1)};
+$('#clr').onclick=()=>{if(confirm('Delete all stored days?')){S={};save();sel=null;fill();draw1();draw2()}};
+function fill(){const D=dates();$('#ds').innerHTML=D.slice().reverse().map(d=>`<option ${d==sel?'selected':''}>${d}</option>`).join('');
+const M=[...new Set(D.map(d=>d.slice(0,7)))];$('#ms').innerHTML=M.slice().reverse().map(x=>`<option>${x}</option>`).join('')}
+$('#ds').onchange=e=>{sel=e.target.value;draw1()};$('#ms').onchange=()=>draw2(1);
+function mk(id,cfg){ch[id]&&ch[id].destroy();const tx=getComputedStyle(document.body).color;Chart.defaults.color=tx;ch[id]=new Chart($(id),cfg)}
+function draw1(alert){const D=dates();if(!D.length){$('#kp').innerHTML='<div>No data yet — upload a Meas. value file.</div>';ch['#c1']&&ch['#c1'].destroy();return}
+if(!sel||!S[sel])sel=D.pop();const a=calc(S[sel]),p=D.filter(x=>x<sel).pop(),b=p&&calc(S[p]);
+const dl=(x,y)=>b?`<span class="${x>y?'up2':'dn'}">${x>y?'▲':'▼'} ${Math.abs((x/y-1)*100||0).toFixed(1)}% vs ${p}</span>`:'<span class="mu">no previous day</span>';
+const K=[['K07 consumption',a.tot,b&&b.tot],['Outgoing (ACB-01+02)',a.out,b&&b.out],['Solar (S1+S3)',a.sol,b&&b.sol],['Transformer losses',a.loss,b&&b.loss],['Compressor share',a.cmp,b&&b.cmp]];
+$('#kp').innerHTML=K.map(k=>`<div><span class="mu">${k[0]}</span><b>${F(k[1])} kWh</b>${k[2]!=null?dl(k[1],k[2]):dl(0,0)}</div>`).join('')+`<div><span class="mu">Loss % of incoming</span><b>${(a.loss/a.inc*100||0).toFixed(2)}%</b></div>`;
+const ks=Object.keys(a.dv).sort((x,y)=>a.dv[y].v-a.dv[x].v),up=[];
+if(b){if(a.tot>b.tot+.5)up.push(['K07 Total',a.tot,b.tot]);ks.forEach(k=>{if(k!=ATS&&a.dv[k].v>b.dv[k].v+.5)up.push([k,a.dv[k].v,b.dv[k].v])})}
+mk('#c1',{type:'bar',data:{labels:ks,datasets:[{label:sel+' kWh',data:ks.map(k=>Math.round(a.dv[k].v)),backgroundColor:ks.map(k=>b&&k!=ATS&&a.dv[k].v>b.dv[k].v+.5?'#d92d20':'#2563eb')}]},
+options:{indexAxis:'y',maintainAspectRatio:false,plugins:{legend:{display:false},title:{display:true,text:`Consumption on ${sel} — total K07 ${F(a.tot)} kWh (red = higher than ${p||'previous day'})`}}}});
+if(alert&&up.length)pop('Higher than previous day ('+p+')',up)}
+let cur=null;
+function draw2(alert){const D=dates();if(!D.length)return;const mo=$('#ms').value||D.pop().slice(0,7);const[y,mm]=mo.split('-').map(Number),pm=mm==1?`${y-1}-12`:`${y}-${String(mm-1).padStart(2,'0')}`;
+const agg=m=>{const ds=D.filter(x=>x.startsWith(m));if(!ds.length)return null;const o={};ds.forEach(d=>{const c=calc(S[d]);for(const k in c.dv){o[k]=o[k]||{v:0,s:{}};o[k].v+=c.dv[k].v;c.dv[k].s.forEach(([n,x])=>o[k].s[n]=(o[k].s[n]||0)+x)}});return{n:ds.length,o}};
+const A=agg(mo),B=agg(pm);$('#pm').textContent=B?`Compared with ${pm} (${B.n} day(s))`:`No data for previous month ${pm} — upload its daily files or its EMS report`;
+const ks=Object.keys(A.o).sort((x,z)=>A.o[z].v-A.o[x].v),av=(R,k)=>R?R.o[k].v/R.n:null,hi=k=>k!=ATS&&B&&av(A,k)>av(B,k)+.5;
+mk('#c2',{type:'bar',data:{labels:ks,datasets:[{label:mo+' avg/day',data:ks.map(k=>Math.round(av(A,k))),backgroundColor:ks.map(k=>hi(k)?'#d92d20':'#2563eb')},...(B?[{label:pm+' avg/day',data:ks.map(k=>Math.round(av(B,k))),backgroundColor:'#98a2b3'}]:[])]},
+options:{indexAxis:'y',maintainAspectRatio:false,onClick:(e,el)=>{if(el.length)show(ks[el[0].index])}}});
+$('#tb').innerHTML='<tr><th>Department</th><th>Total ('+A.n+' d)</th><th>Avg/day</th><th>Prev avg/day</th><th>Change</th></tr>'+ks.map(k=>{const a=av(A,k),b=av(B,k);return`<tr class="cl ${hi(k)?'hi':''}" data-k="${k}"><td>${k} ›</td><td>${F(A.o[k].v)}</td><td>${F(a)}</td><td>${b==null?'–':F(b)}</td><td class="${b!=null&&a>b?'up2':'dn'}">${b?((a/b-1)*100).toFixed(1)+'%':'–'}</td></tr>`}).join('');
+document.querySelectorAll('tr.cl').forEach(r=>r.onclick=()=>show(r.dataset.k));cur={A,B,av};$('#sub').style.display='none';
+const up=ks.filter(hi).map(k=>[k,av(A,k),av(B,k)]);if(alert&&dirty&&up.length)pop('Higher than previous month ('+pm+', avg kWh/day)',up);if(alert)dirty=0}
+function show(k){const{A,B}=cur,s=Object.keys(A.o[k].s),n=A.n,m=B&&B.n,sb=(R,x)=>R?(R.o[k].s[x]||0)/R.n:null;
+$('#sub').style.display='block';$('#sub').innerHTML=`<b>${k} — sub-departments</b><table><tr><th>Sub-department</th><th>Total</th><th>Avg/day</th><th>Prev avg/day</th><th>Change</th></tr>`+s.map(x=>{const a=sb(A,x),b=sb(B,x);
+return`<tr class="${b!=null&&a>b+.5?'hi':''}"><td>${x}</td><td>${F(A.o[k].s[x])}</td><td>${F(a)}</td><td>${b==null?'–':F(b)}</td><td class="${b&&a>b?'up2':'dn'}">${b?((a/b-1)*100).toFixed(1)+'%':'–'}</td></tr>`}).join('')+'</table>';$('#sub').scrollIntoView({behavior:'smooth'})}
+function tab(n){$('#p1').style.display=n==1?'':'none';$('#p2').style.display=n==2?'':'none';$('#t1').className=n==1?'on':'';$('#t2').className=n==2?'on':'';if(n==2)draw2(1);else draw1()}
+$('#t1').onclick=()=>tab(1);$('#t2').onclick=()=>tab(2);fill();draw1();
+</script><script>
+let ip;addEventListener('beforeinstallprompt',e=>{e.preventDefault();ip=e;$('#inst').style.display=''});
+$('#inst').onclick=async()=>{if(ip){ip.prompt();await ip.userChoice;ip=null;$('#inst').style.display='none'}};
+if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+</script></body></html>
